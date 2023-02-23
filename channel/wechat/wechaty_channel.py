@@ -4,9 +4,11 @@
 wechaty channel
 Python Wechaty - https://github.com/wechaty/python-wechaty
 """
+from datetime import date
 import io
 import os
 import json
+import sqlite3
 import time
 import asyncio
 import requests
@@ -21,7 +23,23 @@ from config import conf
 
 class WechatyChannel(Channel):
 
+    conn = None
+    cursor = None
+
     def __init__(self):
+        self.conn = sqlite3.connect('database.db', check_same_thread=False)
+        self.cursor = self.conn.cursor()
+
+        self.cursor.execute("""
+        create table if not exists `user_request`(
+            `user_id` varchat(50) NOT NULL,
+            `date` date NOT NULL,
+            `request_count` int(11) NOT NULL,
+            PRIMARY KEY (`user_id`,`date`)
+        )
+        """)
+        self.conn.commit()
+
         pass
 
     def startup(self):
@@ -61,6 +79,31 @@ class WechatyChannel(Channel):
         # other_user_id = msg['User']['UserName']  # 对手方id
         content = msg.text()
         mention_content = await msg.mention_text()  # 返回过滤掉@name后的消息
+        today = date.today()
+
+        # 处理兑换码逻辑
+        if mention_content.startswith("兑换码"):
+            cdkey = mention_content[3:11]
+            data = {"userId": cdkey}
+            response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
+            if response.json().code == 0:
+                self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
+                self.conn.commit()
+                return [f"兑换码{cdkey}-兑换成功:提问次数 + 3."]
+            else:
+                return [f"兑换码{cdkey}-兑换失败:今日未激活该验证码或者已兑换."]
+
+        #判断是否超过次数了
+    
+        result = 0
+        cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
+        self.conn.commit()
+        if cursor.rowcount > 0:
+            result = cursor.fetchone()
+    
+        if result != 0 and result[0] == 0:
+            return ["您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."]
+
         match_prefix = self.check_prefix(content, conf().get('single_chat_prefix'))
         conversation: Union[Room, Contact] = from_contact if room is None else room
 
@@ -76,8 +119,12 @@ class WechatyChannel(Channel):
                 if img_match_prefix:
                     content = content.split(img_match_prefix, 1)[1].strip()
                     await self._do_send_img(content, from_user_id)
+                    self.updateUserCount(result,from_user_id,today)
+
                 else:
                     await self._do_send(content, from_user_id)
+                    self.updateUserCount(result,from_user_id,today)
+
             elif msg.is_self() and match_prefix:
                 # 自己给好友发送消息
                 str_list = content.split(match_prefix, 1)
@@ -87,8 +134,12 @@ class WechatyChannel(Channel):
                 if img_match_prefix:
                     content = content.split(img_match_prefix, 1)[1].strip()
                     await self._do_send_img(content, to_user_id)
+                    self.updateUserCount(result,from_user_id,today)
+
                 else:
                     await self._do_send(content, to_user_id)
+                    self.updateUserCount(result,from_user_id,today)
+
         elif room and msg.type() == MessageType.MESSAGE_TYPE_TEXT:
             # 群组&文本消息
             room_id = room.room_id
@@ -108,8 +159,19 @@ class WechatyChannel(Channel):
                 if img_match_prefix:
                     content = content.split(img_match_prefix, 1)[1].strip()
                     await self._do_send_group_img(content, room_id)
+                    self.updateUserCount(result,from_user_id,today)
+
                 else:
                     await self._do_send_group(content, room_id, from_user_id, from_user_name)
+                    self.updateUserCount(result,from_user_id,today)
+
+    def updateUserCount(self,result,from_user_id,today):
+        if result == 0:
+            self.cursor.execute("INSERT INTO user_request (user_id, request_count, date) VALUES (?, ?, ?)", (from_user_id, 0, today))
+            self.conn.commit()
+        else:
+            self.cursor.execute("UPDATE user_request SET request_count = request_count - 1 WHERE user_id=? and date=?", (from_user_id, today))
+            self.conn.commit()
 
     async def send(self, message: Union[str, Message, FileBox, Contact, UrlLink, MiniProgram], receiver):
         logger.info('[WX] sendMsg={}, receiver={}'.format(message, receiver))
