@@ -1,5 +1,8 @@
 # encoding:utf-8
 
+import json
+
+import requests
 from bot.bot import Bot
 from config import conf
 from common.log import logger
@@ -37,7 +40,16 @@ class OpenAIBot(Bot):
 
     def reply_text(self, query, user_id, retry_count=0):
         try:
-            response = openai.Completion.create(
+            headers = {'Content-Type': 'application/json'}
+            data = {"prompt":query}
+            response = requests.post("http://127.0.0.1:8088/api", headers=headers, data=json.dumps(data))
+            if response.status_code == 200:
+                print(response.json()['message'])
+                logger.info("[OPEN_AI] reply={}".format(response.json()['message']))
+                return response.json()['message']
+            else:
+                print(response.status_code)
+                response = openai.Completion.create(
                 model="text-davinci-003",  # 对话模型的名称
                 prompt=query,
                 temperature=0.9,  # 值在[0,1]之间，越大表示回复越具有不确定性
@@ -46,10 +58,11 @@ class OpenAIBot(Bot):
                 frequency_penalty=0.0,  # [-2,2]之间，该值越大则更倾向于产生不同的内容
                 presence_penalty=0.0,  # [-2,2]之间，该值越大则更倾向于产生不同的内容
                 stop=["\n\n\n"]
-            )
-            res_content = response.choices[0]['text'].strip().replace('<|endoftext|>', '')
-            logger.info("[OPEN_AI] reply={}".format(res_content))
-            return res_content
+                )
+                res_content = response.choices[0]['text'].strip().replace('<|endoftext|>', '')
+                logger.info("[OPEN_AI] reply={}".format(res_content))
+                return res_content
+
         except openai.error.RateLimitError as e:
             # rate limit exception
             logger.warn(e)
