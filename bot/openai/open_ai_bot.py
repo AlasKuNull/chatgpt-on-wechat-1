@@ -1,5 +1,6 @@
 # encoding:utf-8
 
+from datetime import date
 import json
 
 import requests
@@ -29,7 +30,7 @@ class OpenAIBot(Bot):
             new_query = Session.build_session_query(query, from_user_id)
             logger.debug("[OPEN_AI] session query={}".format(new_query))
 
-            reply_content = self.reply_text(query,new_query, from_user_id, 0)
+            reply_content = self.reply_web(query,new_query, from_user_id, 0)
             logger.debug("[OPEN_AI] new_query={}, user={}, reply_cont={}".format(new_query, from_user_id, reply_content))
             if reply_content and query:
                 Session.save_session(query, reply_content, from_user_id)
@@ -38,7 +39,7 @@ class OpenAIBot(Bot):
         elif context.get('type', None) == 'IMAGE_CREATE':
             return self.create_img(query, 0)
 
-    def reply_text(self, query,new_query, user_id, retry_count=0):
+    def reply_web(self,query,new_query,from_user_id,retry_count=0):
         try:
             headers = {'Content-Type': 'application/json'}
             data = {"prompt":query}
@@ -46,22 +47,27 @@ class OpenAIBot(Bot):
             if response.status_code == 200:
                 print(response.json()['message'])
                 logger.info("[OPEN_AI] reply={}".format(response.json()['message']))
+                self.updateUserCount(from_user_id)
                 return response.json()['message']
-            else:
-                print(response.status_code) 
-                response = openai.Completion.create(
-                model="text-davinci-003",  # 对话模型的名称
-                prompt=new_query,
-                temperature=0.9,  # 值在[0,1]之间，越大表示回复越具有不确定性
-                max_tokens=1200,  # 回复最大的字符数
-                top_p=1,
-                frequency_penalty=0.0,  # [-2,2]之间，该值越大则更倾向于产生不同的内容
-                presence_penalty=0.0,  # [-2,2]之间，该值越大则更倾向于产生不同的内容
-                stop=["\n\n\n"]
-                )
-                res_content = response.choices[0]['text'].strip().replace('<|endoftext|>', '')
-                logger.info("[OPEN_AI] reply={}".format(res_content))
-                return res_content
+        except Exception as e:
+            return self.reply_text(query,new_query, from_user_id, 0)
+
+    def reply_text(self, query,new_query, user_id, retry_count=0):
+        try:
+            response = openai.Completion.create(
+            model="text-davinci-003",  # 对话模型的名称
+            prompt=new_query,
+            temperature=0.9,  # 值在[0,1]之间，越大表示回复越具有不确定性
+            max_tokens=1200,  # 回复最大的字符数
+            top_p=1,
+            frequency_penalty=0.0,  # [-2,2]之间，该值越大则更倾向于产生不同的内容
+            presence_penalty=0.0,  # [-2,2]之间，该值越大则更倾向于产生不同的内容
+            stop=["\n\n\n"]
+            )
+            res_content = response.choices[0]['text'].strip().replace('<|endoftext|>', '')
+            logger.info("[OPEN_AI] reply={}".format(res_content))
+            self.updateUserCount(user_id)
+            return res_content
 
         except openai.error.RateLimitError as e:
             # rate limit exception
@@ -78,6 +84,15 @@ class OpenAIBot(Bot):
             Session.clear_session(user_id)
             return "请再问我一次吧"
 
+    def updateUserCount(self,from_user_id):
+        logger.debug("sender success update count from_user_id{}".format(from_user_id))
+        import database.manager
+        database = database.manager.DatabaseManager()
+        today = date.today()
+        try:
+            database.execute("INSERT INTO user_request (user_id, request_count, date) VALUES (?, ?, ?)", (from_user_id, 0, today))
+        except Exception as e:
+            database.execute("UPDATE user_request SET request_count = request_count - 1 WHERE user_id=? and date=?", (from_user_id, today))
 
     def create_img(self, query, retry_count=0):
         try:

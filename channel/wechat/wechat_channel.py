@@ -4,7 +4,6 @@
 wechat channel
 """
 from datetime import date
-import sqlite3
 import itchat
 import json
 from itchat.content import *
@@ -32,22 +31,7 @@ def handler_group_msg(msg):
 
 class WechatChannel(Channel):
 
-    conn = None
-    cursor = None
-
     def __init__(self):
-        self.conn = sqlite3.connect('database.db', check_same_thread=False)
-        self.cursor = self.conn.cursor()
-
-        self.cursor.execute("""
-        create table if not exists `user_request`(
-            `user_id` varchat(50) NOT NULL,
-            `date` date NOT NULL,
-            `request_count` int(11) NOT NULL,
-            PRIMARY KEY (`user_id`,`date`)
-        )
-        """)
-        self.conn.commit()
         pass
 
     def startup(self):
@@ -66,16 +50,21 @@ class WechatChannel(Channel):
         
         match_prefix = self.check_prefix(content, conf().get('single_chat_prefix'))
         if match_prefix is not None:
-            today = date.today()      
+            import database.manager
+            database = database.manager.DatabaseManager()
+            today = date.today()
             codeContent = content
+            if match_prefix != '':
+                str_list = codeContent.split(match_prefix, 1)
+                if len(str_list) == 2:
+                    codeContent = str_list[1].strip()      
             # 处理兑换码逻辑
             if codeContent.startswith("兑换码"):
                 cdkey = codeContent[3:11]
                 data = {"userId": cdkey}
                 response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
-                if response.json().code == 0:
-                    self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
-                    self.conn.commit()
+                if response.json()["code"] == 0:
+                    database.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (other_user_id, today))
                     replyText = f"兑换码{cdkey}-兑换成功:提问次数 + 3."
                     self.send(replyText,from_user_id)
                     return 
@@ -85,16 +74,15 @@ class WechatChannel(Channel):
                     return
 
             #判断是否超过次数了
-            result = 0
-            self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
-            self.conn.commit()
-            if self.cursor.rowcount > 0:
-                result = self.cursor.fetchone()
-    
-            if result != 0 and result[0] == 0:
-                replyText = "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
-                self.send(replyText,from_user_id)
-                return  
+            c = database.execute("select request_count from user_request where user_id = ? and date = ?",(other_user_id,today))
+
+            if c.fetchone() is not None:
+                result = c.fetchone()
+                logger.debug("result: {}".format(result))
+                if result[0] <= 0:
+                    replyText = "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
+                    self.send(replyText,from_user_id)
+                    return  
 
         if from_user_id == other_user_id and match_prefix is not None:
             # 好友向自己发送消息
@@ -109,7 +97,6 @@ class WechatChannel(Channel):
                 thread_pool.submit(self._do_send_img, content, from_user_id)
             else:
                 thread_pool.submit(self._do_send, content, from_user_id)
-                self.updateUserCount(from_user_id)
 
         elif to_user_id == other_user_id and match_prefix:
             # 自己给好友发送消息
@@ -122,15 +109,6 @@ class WechatChannel(Channel):
                 thread_pool.submit(self._do_send_img, content, to_user_id)
             else:
                 thread_pool.submit(self._do_send, content, to_user_id)
-
-    def updateUserCount(self,from_user_id):
-        today = date.today()
-        try:
-            self.cursor.execute("INSERT INTO user_request (user_id, request_count, date) VALUES (?, ?, ?)", (from_user_id, 0, today))
-            self.conn.commit()
-        except Exception as e:
-            self.cursor.execute("UPDATE user_request SET request_count = request_count - 1 WHERE user_id=? and date=?", (from_user_id, today))
-            self.conn.commit()
 
     def handle_group(self, msg):
         logger.debug("[WX]receive group msg: " + json.dumps(msg, ensure_ascii=False))
@@ -154,16 +132,16 @@ class WechatChannel(Channel):
                        or self.check_contain(origin_content, config.get('group_chat_keyword'))
         if ('ALL_GROUP' in config.get('group_name_white_list') or group_name in config.get('group_name_white_list') or self.check_contain(group_name, config.get('group_name_keyword_white_list'))) and match_prefix:
             today = date.today()
-
+            import database.manager
+            database = database.manager.DatabaseManager()
             # 处理兑换码逻辑
             codeContent = content.replace(conf().get('group_chat_prefix')[0],"") 
             if codeContent.startswith("兑换码"):
                 cdkey = codeContent[3:11]
                 data = {"userId": cdkey}
                 response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
-                if response.json().code == 0:
-                    self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
-                    self.conn.commit()
+                if response.json()['code'] == 0:
+                    database.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
                     replyText = '@' + msg['ActualNickName'] + ' ' + f"兑换码{cdkey}-兑换成功:提问次数 + 3."
                     self.send(replyText,msg['User']['UserName'])
                     return
@@ -173,22 +151,19 @@ class WechatChannel(Channel):
                     return
 
             #判断是否超过次数了
-            result = 0
-            self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
-            if self.cursor.rowcount > 0:
-                result = self.cursor.fetchone()
-    
-            if result != 0 and result[0] == 0:
-                replyText = '@' + msg['ActualNickName'] + ' ' + "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
-                self.send(replyText,msg['User']['UserName'])
-                return
+            c = database.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
+            if c.fetchone is not None:
+                result = c.fetchone()
+                if result[0] <= 0:
+                    replyText = '@' + msg['ActualNickName'] + ' ' + "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
+                    self.send(replyText,msg['User']['UserName'])
+                    return
             img_match_prefix = self.check_prefix(content, conf().get('image_create_prefix'))
             if img_match_prefix:
                 content = content.split(img_match_prefix, 1)[1].strip()
                 thread_pool.submit(self._do_send_img, content, group_id)
             else:
                 thread_pool.submit(self._do_send_group, content, msg)
-            self.updateUserCount(from_user_id)
 
     def send(self, msg, receiver):
         logger.info('[WX] sendMsg={}, receiver={}'.format(msg, receiver))
