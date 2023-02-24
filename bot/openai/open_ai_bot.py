@@ -29,7 +29,7 @@ class OpenAIBot(Bot):
             new_query = Session.build_session_query(query, from_user_id)
             logger.debug("[OPEN_AI] session query={}".format(new_query))
 
-            reply_content = self.reply_text(new_query, from_user_id, 0)
+            reply_content = self.reply_text(query,new_query, from_user_id, 0)
             logger.debug("[OPEN_AI] new_query={}, user={}, reply_cont={}".format(new_query, from_user_id, reply_content))
             if reply_content and query:
                 Session.save_session(query, reply_content, from_user_id)
@@ -38,20 +38,20 @@ class OpenAIBot(Bot):
         elif context.get('type', None) == 'IMAGE_CREATE':
             return self.create_img(query, 0)
 
-    def reply_text(self, query, user_id, retry_count=0):
+    def reply_text(self, query,new_query, user_id, retry_count=0):
         try:
             headers = {'Content-Type': 'application/json'}
             data = {"prompt":query}
             response = requests.post("http://127.0.0.1:8088/api", headers=headers, data=json.dumps(data))
             if response.status_code == 200:
-                print(response.json().message)
-                logger.info("[OPEN_AI] reply={}".format(response.json().message))
-                return response.json().message
+                print(response.json()['message'])
+                logger.info("[OPEN_AI] reply={}".format(response.json()['message']))
+                return response.json()['message']
             else:
                 print(response.status_code) 
                 response = openai.Completion.create(
                 model="text-davinci-003",  # 对话模型的名称
-                prompt=query,
+                prompt=new_query,
                 temperature=0.9,  # 值在[0,1]之间，越大表示回复越具有不确定性
                 max_tokens=1200,  # 回复最大的字符数
                 top_p=1,
