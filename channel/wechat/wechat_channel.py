@@ -63,32 +63,39 @@ class WechatChannel(Channel):
         to_user_id = msg['ToUserName']              # 接收人id
         other_user_id = msg['User']['UserName']     # 对手方id
         content = msg['Text']
-        today = date.today()
-
-        codeContent = content.replace(conf().get('group_chat_prefix'),"") 
-        # 处理兑换码逻辑
-        if codeContent.startswith("兑换码"):
-            cdkey = codeContent[3:11]
-            data = {"userId": cdkey}
-            response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
-            if response.json().code == 0:
-                self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
-                self.conn.commit()
-                return [f"兑换码{cdkey}-兑换成功:提问次数 + 3."]
-            else:
-                return [f"兑换码{cdkey}-兑换失败:今日未激活该验证码或者已兑换."]
-
-        #判断是否超过次数了
-        result = 0
-        cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
-        self.conn.commit()
-        if cursor.rowcount > 0:
-            result = cursor.fetchone()
-    
-        if result != 0 and result[0] == 0:
-            return ["您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."]
         
         match_prefix = self.check_prefix(content, conf().get('single_chat_prefix'))
+        if match_prefix is not None:
+            today = date.today()      
+            codeContent = content
+            # 处理兑换码逻辑
+            if codeContent.startswith("兑换码"):
+                cdkey = codeContent[3:11]
+                data = {"userId": cdkey}
+                response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
+                if response.json().code == 0:
+                    self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
+                    self.conn.commit()
+                    replyText = f"兑换码{cdkey}-兑换成功:提问次数 + 3."
+                    self.send(replyText,from_user_id)
+                    return 
+                else:
+                    replyText = f"兑换码{cdkey}-兑换失败:今日未激活该验证码或者已兑换."
+                    self.send(replyText,from_user_id)
+                    return
+
+            #判断是否超过次数了
+            result = 0
+            cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
+            self.conn.commit()
+            if cursor.rowcount > 0:
+                result = cursor.fetchone()
+    
+            if result != 0 and result[0] == 0:
+                replyText = "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
+                self.send(replyText,from_user_id)
+                return  
+
         if from_user_id == other_user_id and match_prefix is not None:
             # 好友向自己发送消息
             if match_prefix != '':
@@ -100,11 +107,9 @@ class WechatChannel(Channel):
             if img_match_prefix:
                 content = content.split(img_match_prefix, 1)[1].strip()
                 thread_pool.submit(self._do_send_img, content, from_user_id)
-                self.updateUserCount(result,from_user_id,today)
-
             else:
                 thread_pool.submit(self._do_send, content, from_user_id)
-                self.updateUserCount(result,from_user_id,today)
+                self.updateUserCount(from_user_id)
 
         elif to_user_id == other_user_id and match_prefix:
             # 自己给好友发送消息
@@ -115,17 +120,15 @@ class WechatChannel(Channel):
             if img_match_prefix:
                 content = content.split(img_match_prefix, 1)[1].strip()
                 thread_pool.submit(self._do_send_img, content, to_user_id)
-                self.updateUserCount(result,from_user_id,today)
-
             else:
                 thread_pool.submit(self._do_send, content, to_user_id)
-                self.updateUserCount(result,from_user_id,today)
 
-    def updateUserCount(self,result,from_user_id,today):
-        if result == 0:
+    def updateUserCount(self,from_user_id):
+        today = date.today()
+        try:
             self.cursor.execute("INSERT INTO user_request (user_id, request_count, date) VALUES (?, ?, ?)", (from_user_id, 0, today))
             self.conn.commit()
-        else:
+        except Exception as e:
             self.cursor.execute("UPDATE user_request SET request_count = request_count - 1 WHERE user_id=? and date=?", (from_user_id, today))
             self.conn.commit()
 
@@ -139,30 +142,6 @@ class WechatChannel(Channel):
         origin_content = msg['Content']
         content = msg['Content']
 
-        today = date.today()
-
-        # 处理兑换码逻辑
-        if content.startswith("兑换码"):
-            cdkey = content[3:11]
-            data = {"userId": cdkey}
-            response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
-            if response.json().code == 0:
-                self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
-                self.conn.commit()
-                return [f"兑换码{cdkey}-兑换成功:提问次数 + 3."]
-            else:
-                return [f"兑换码{cdkey}-兑换失败:今日未激活该验证码或者已兑换."]
-
-        #判断是否超过次数了
-        result = 0
-        cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
-        self.conn.commit()
-        if cursor.rowcount > 0:
-            result = cursor.fetchone()
-    
-        if result != 0 and result[0] == 0:
-            return ["您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."]
-
         content_list = content.split(' ', 1)
         context_special_list = content.split('\u2005', 1)
         if len(context_special_list) == 2:
@@ -174,14 +153,43 @@ class WechatChannel(Channel):
         match_prefix = (msg['IsAt'] and not config.get("group_at_off", False)) or self.check_prefix(origin_content, config.get('group_chat_prefix')) \
                        or self.check_contain(origin_content, config.get('group_chat_keyword'))
         if ('ALL_GROUP' in config.get('group_name_white_list') or group_name in config.get('group_name_white_list') or self.check_contain(group_name, config.get('group_name_keyword_white_list'))) and match_prefix:
+            today = date.today()
+
+            # 处理兑换码逻辑
+            codeContent = content.replace(conf().get('group_chat_prefix')[0],"") 
+            if codeContent.startswith("兑换码"):
+                cdkey = codeContent[3:11]
+                data = {"userId": cdkey}
+                response = requests.post('https://www.shaobingriyu.com/api/user/openai/ticket/consume',data=data)
+                if response.json().code == 0:
+                    self.cursor.execute("UPDATE user_request SET request_count = request_count + 3 WHERE user_id=? and date=?", (from_user_id, today))
+                    self.conn.commit()
+                    replyText = '@' + msg['ActualNickName'] + ' ' + f"兑换码{cdkey}-兑换成功:提问次数 + 3."
+                    self.send(replyText,msg['User']['UserName'])
+                    return
+                else:
+                    replyText = '@' + msg['ActualNickName'] + ' ' + f"兑换码{cdkey}-兑换失败:今日未激活该验证码或者已兑换."
+                    self.send(replyText,msg['User']['UserName'])
+                    return
+
+            #判断是否超过次数了
+            result = 0
+            cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
+            self.conn.commit()
+            if cursor.rowcount > 0:
+                result = cursor.fetchone()
+    
+            if result != 0 and result[0] == 0:
+                replyText = '@' + msg['ActualNickName'] + ' ' + "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
+                self.send(replyText,msg['User']['UserName'])
+                return
             img_match_prefix = self.check_prefix(content, conf().get('image_create_prefix'))
             if img_match_prefix:
                 content = content.split(img_match_prefix, 1)[1].strip()
                 thread_pool.submit(self._do_send_img, content, group_id)
-                self.updateUserCount(result,from_user_id,today)
             else:
                 thread_pool.submit(self._do_send_group, content, msg)
-                self.updateUserCount(result,from_user_id,today)
+            self.updateUserCount(from_user_id)
 
     def send(self, msg, receiver):
         logger.info('[WX] sendMsg={}, receiver={}'.format(msg, receiver))

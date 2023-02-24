@@ -44,11 +44,11 @@ class OpenAIBot(Bot):
             data = {"prompt":query}
             response = requests.post("http://127.0.0.1:8088/api", headers=headers, data=json.dumps(data))
             if response.status_code == 200:
-                print(response.json()['message'])
-                logger.info("[OPEN_AI] reply={}".format(response.json()['message']))
-                return response.json()['message']
+                print(response.json().message)
+                logger.info("[OPEN_AI] reply={}".format(response.json().message))
+                return response.json().message
             else:
-                print(response.status_code)
+                print(response.status_code) 
                 response = openai.Completion.create(
                 model="text-davinci-003",  # 对话模型的名称
                 prompt=query,
