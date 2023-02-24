@@ -86,10 +86,10 @@ class WechatChannel(Channel):
 
             #判断是否超过次数了
             result = 0
-            cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
+            self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
             self.conn.commit()
-            if cursor.rowcount > 0:
-                result = cursor.fetchone()
+            if self.cursor.rowcount > 0:
+                result = self.cursor.fetchone()
     
             if result != 0 and result[0] == 0:
                 replyText = "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
@@ -174,10 +174,9 @@ class WechatChannel(Channel):
 
             #判断是否超过次数了
             result = 0
-            cursor = self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
-            self.conn.commit()
-            if cursor.rowcount > 0:
-                result = cursor.fetchone()
+            self.cursor.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
+            if self.cursor.rowcount > 0:
+                result = self.cursor.fetchone()
     
             if result != 0 and result[0] == 0:
                 replyText = '@' + msg['ActualNickName'] + ' ' + "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
