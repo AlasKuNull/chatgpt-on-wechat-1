@@ -75,9 +75,8 @@ class WechatChannel(Channel):
 
             #判断是否超过次数了
             c = database.execute("select request_count from user_request where user_id = ? and date = ?",(other_user_id,today))
-
-            if c.fetchone() is not None:
-                result = c.fetchone()
+            result = c.fetchone()
+            if result is not None:
                 logger.debug("result: {}".format(result))
                 if result[0] <= 0:
                     replyText = "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
@@ -152,8 +151,8 @@ class WechatChannel(Channel):
 
             #判断是否超过次数了
             c = database.execute("select request_count from user_request where user_id = ? and date = ?",(from_user_id,today))
-            if c.fetchone is not None:
-                result = c.fetchone()
+            result = c.fetchone()
+            if result is not None:
                 if result[0] <= 0:
                     replyText = '@' + msg['ActualNickName'] + ' ' + "您今日的提问次数已消耗完, 看群公告获取兑换码, 可以增加3次."
                     self.send(replyText,msg['User']['UserName'])
